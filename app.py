@@ -91,11 +91,14 @@ def predict_bert_api(text):
     if HF_TOKEN:
         headers["Authorization"] = f"Bearer {HF_TOKEN}"
 
-    payload = {"inputs": text[:512]}   # truncate to model limit
+    payload = {
+        "inputs": text[:512],
+        "options": {"wait_for_model": True},  # HF waits for model to load, no 503
+    }
 
-    for attempt in range(5):
+    for attempt in range(3):
         try:
-            resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=60)
+            resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=120)
 
             if resp.status_code == 200:
                 data    = resp.json()
@@ -109,15 +112,6 @@ def predict_bert_api(text):
                     [neg, pos],
                 )
 
-            elif resp.status_code == 503:
-                # Model cold-starting on HF side — wait full estimated time then retry
-                try:
-                    wait = resp.json().get("estimated_time", 20)
-                except Exception:
-                    wait = 20
-                time.sleep(min(float(wait), 60))
-                continue
-
             elif resp.status_code == 401:
                 return "AUTH_ERROR", 0.0, [0.0, 0.0]
 
@@ -125,12 +119,12 @@ def predict_bert_api(text):
                 return None
 
         except requests.exceptions.Timeout:
-            time.sleep(5)
+            time.sleep(3)
             continue
         except requests.exceptions.RequestException:
             return None
 
-    return None   # all 5 attempts failed
+    return None   # all 3 attempts failed
 
 
 # ---------------------------------------------------------------------------
@@ -181,41 +175,20 @@ analyze = st.button(
 )
 
 # ---------------------------------------------------------------------------
-# Run analysis and store in session_state so results persist across reruns
+# UI — Results
 # ---------------------------------------------------------------------------
 if analyze and user_text.strip():
-    sk_result   = None
-    bert_result = None
-
-    if sklearn_ready:
-        sk_result = predict_sklearn(user_text, vectorizer, clf)
-
-    with st.spinner("Calling DistilBERT API… (may take up to 60s on first run while model warms up)"):
-        bert_result = predict_bert_api(user_text)
-
-    st.session_state["last_text"]        = user_text
-    st.session_state["last_sk_result"]   = sk_result
-    st.session_state["last_bert_result"] = bert_result
-
-# ---------------------------------------------------------------------------
-# UI — Results (rendered from session_state so they survive reruns)
-# ---------------------------------------------------------------------------
-if "last_sk_result" in st.session_state or "last_bert_result" in st.session_state:
-    sk_result   = st.session_state.get("last_sk_result")
-    bert_result = st.session_state.get("last_bert_result")
 
     st.divider()
     st.subheader("Results")
-    if "last_text" in st.session_state:
-        st.caption(f'Text analysed: *"{st.session_state["last_text"]}"*')
 
     col_sk, col_bert = st.columns(2)
 
     # --- Sklearn ---
     with col_sk:
         st.markdown("#### 🔵 Scikit-learn")
-        if sk_result:
-            sk_sent, sk_conf, sk_proba = sk_result
+        if sklearn_ready:
+            sk_sent, sk_conf, sk_proba = predict_sklearn(user_text, vectorizer, clf)
             css  = "positive" if sk_sent == "Positive" else "negative"
             icon = "✅" if sk_sent == "Positive" else "❌"
             st.markdown(f'<p class="{css}">{icon} {sk_sent}</p>', unsafe_allow_html=True)
@@ -228,6 +201,9 @@ if "last_sk_result" in st.session_state or "last_bert_result" in st.session_stat
     # --- DistilBERT via API ---
     with col_bert:
         st.markdown("#### 🟠 DistilBERT")
+        with st.spinner("Calling DistilBERT API…"):
+            bert_result = predict_bert_api(user_text)
+
         if bert_result and bert_result[0] == "AUTH_ERROR":
             st.error(
                 "❌ HF_TOKEN is missing or invalid. "
@@ -242,13 +218,13 @@ if "last_sk_result" in st.session_state or "last_bert_result" in st.session_stat
             st.markdown(f"Confidence: **{bert_conf:.1%}**")
             st.progress(bert_conf)
         else:
-            st.warning("⚠️ Model service temporarily unavailable. Please try again in a moment.")
+            st.warning(
+                "⚠️ Model service temporarily unavailable. Please try again in a moment."
+            )
             bert_proba = [0.0, 0.0]
 
     # --- Confidence comparison chart ---
-    if sk_result and bert_result and bert_result[0] not in (None, "AUTH_ERROR"):
-        sk_proba   = sk_result[2]
-        bert_proba = bert_result[2]
+    if sklearn_ready and bert_result and bert_result[0] not in (None, "AUTH_ERROR"):
         st.divider()
         st.subheader("📊 Confidence Comparison")
 
