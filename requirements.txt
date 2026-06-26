@@ -1,15 +1,6 @@
-# Core ML & data
+streamlit>=1.34.0
 scikit-learn>=1.4.0
-datasets>=2.18.0
 joblib>=1.3.0
 numpy>=1.26.0
-
-# Deep learning (DistilBERT via Hugging Face)
-transformers>=4.39.0
-torch>=2.2.0          # CPU-only is fine; swap for torch+cu118 for GPU
-
-# Web app
-streamlit>=1.34.0
-
-# Visualisation
 plotly>=5.20.0
+requests>=2.31.0
