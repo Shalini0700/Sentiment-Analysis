@@ -178,20 +178,41 @@ analyze = st.button(
 )
 
 # ---------------------------------------------------------------------------
-# UI — Results
+# Run analysis and store in session_state so results persist across reruns
 # ---------------------------------------------------------------------------
 if analyze and user_text.strip():
+    sk_result   = None
+    bert_result = None
+
+    if sklearn_ready:
+        sk_result = predict_sklearn(user_text, vectorizer, clf)
+
+    with st.spinner("Calling DistilBERT API…"):
+        bert_result = predict_bert_api(user_text)
+
+    st.session_state["last_text"]        = user_text
+    st.session_state["last_sk_result"]   = sk_result
+    st.session_state["last_bert_result"] = bert_result
+
+# ---------------------------------------------------------------------------
+# UI — Results (rendered from session_state so they survive reruns)
+# ---------------------------------------------------------------------------
+if "last_sk_result" in st.session_state or "last_bert_result" in st.session_state:
+    sk_result   = st.session_state.get("last_sk_result")
+    bert_result = st.session_state.get("last_bert_result")
 
     st.divider()
     st.subheader("Results")
+    if "last_text" in st.session_state:
+        st.caption(f'Text analysed: *"{st.session_state["last_text"]}"*')
 
     col_sk, col_bert = st.columns(2)
 
     # --- Sklearn ---
     with col_sk:
         st.markdown("#### 🔵 Scikit-learn")
-        if sklearn_ready:
-            sk_sent, sk_conf, sk_proba = predict_sklearn(user_text, vectorizer, clf)
+        if sk_result:
+            sk_sent, sk_conf, sk_proba = sk_result
             css  = "positive" if sk_sent == "Positive" else "negative"
             icon = "✅" if sk_sent == "Positive" else "❌"
             st.markdown(f'<p class="{css}">{icon} {sk_sent}</p>', unsafe_allow_html=True)
@@ -204,9 +225,6 @@ if analyze and user_text.strip():
     # --- DistilBERT via API ---
     with col_bert:
         st.markdown("#### 🟠 DistilBERT")
-        with st.spinner("Calling DistilBERT API…"):
-            bert_result = predict_bert_api(user_text)
-
         if bert_result and bert_result[0] == "AUTH_ERROR":
             st.error(
                 "❌ HF_TOKEN is missing or invalid. "
@@ -221,13 +239,13 @@ if analyze and user_text.strip():
             st.markdown(f"Confidence: **{bert_conf:.1%}**")
             st.progress(bert_conf)
         else:
-            st.warning(
-                "⚠️ Model service temporarily unavailable. Please try again in a moment."
-            )
+            st.warning("⚠️ Model service temporarily unavailable. Please try again in a moment.")
             bert_proba = [0.0, 0.0]
 
     # --- Confidence comparison chart ---
-    if sklearn_ready and bert_result and bert_result[0] not in (None, "AUTH_ERROR"):
+    if sk_result and bert_result and bert_result[0] not in (None, "AUTH_ERROR"):
+        sk_proba   = sk_result[2]
+        bert_proba = bert_result[2]
         st.divider()
         st.subheader("📊 Confidence Comparison")
 
