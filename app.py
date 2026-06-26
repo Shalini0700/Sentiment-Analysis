@@ -93,9 +93,9 @@ def predict_bert_api(text):
 
     payload = {"inputs": text[:512]}   # truncate to model limit
 
-    for attempt in range(3):
+    for attempt in range(5):
         try:
-            resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=30)
+            resp = requests.post(HF_API_URL, headers=headers, json=payload, timeout=60)
 
             if resp.status_code == 200:
                 data    = resp.json()
@@ -110,9 +110,12 @@ def predict_bert_api(text):
                 )
 
             elif resp.status_code == 503:
-                # Model cold-starting on HF side — wait and retry
-                wait = min(resp.json().get("estimated_time", 10), 20)
-                time.sleep(wait)
+                # Model cold-starting on HF side — wait full estimated time then retry
+                try:
+                    wait = resp.json().get("estimated_time", 20)
+                except Exception:
+                    wait = 20
+                time.sleep(min(float(wait), 60))
                 continue
 
             elif resp.status_code == 401:
@@ -122,12 +125,12 @@ def predict_bert_api(text):
                 return None
 
         except requests.exceptions.Timeout:
-            time.sleep(3)
+            time.sleep(5)
             continue
         except requests.exceptions.RequestException:
             return None
 
-    return None   # all 3 attempts failed
+    return None   # all 5 attempts failed
 
 
 # ---------------------------------------------------------------------------
@@ -187,7 +190,7 @@ if analyze and user_text.strip():
     if sklearn_ready:
         sk_result = predict_sklearn(user_text, vectorizer, clf)
 
-    with st.spinner("Calling DistilBERT API…"):
+    with st.spinner("Calling DistilBERT API… (may take up to 60s on first run while model warms up)"):
         bert_result = predict_bert_api(user_text)
 
     st.session_state["last_text"]        = user_text
